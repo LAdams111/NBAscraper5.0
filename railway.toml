@@ -1,7 +1,10 @@
 [build]
-buildCommand = "npm run build"
+buildCommand = "npm ci && npm run build"
 
 [deploy]
-# Override in Railway dashboard for cron jobs, e.g.:
-# node dist/index.js --test --season 2024-25
-startCommand = "npm start"
+# Runs once per deploy / cron tick, then exits (not a long-lived web server).
+startCommand = "node dist/index.js --test --season 2024-25"
+restartPolicyType = "NEVER"
+
+# Uncomment when you're ready for daily auto-scrape (06:00 UTC):
+# cronSchedule = "0 6 * * *"
