@@ -21,7 +21,7 @@ export function weightToKg(weight: string | null | undefined): number | null {
   const pounds = Number.parseFloat(weight.trim());
   if (Number.isNaN(pounds)) return null;
 
-  return Math.round(pounds * 0.453592 * 10) / 10;
+  return Math.round(pounds * 0.453592);
 }
 
 /** Normalize position to a short label when possible. */

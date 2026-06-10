@@ -68,10 +68,7 @@ export class IngestClient {
     }
 
     if (!response.ok) {
-      const detail =
-        body && typeof body === "object" && "error" in body
-          ? String((body as { error: unknown }).error)
-          : text || response.statusText;
+      const detail = formatIngestError(body, text, response.statusText);
       throw new IngestClientError(
         `Ingest failed (${response.status}): ${detail}`,
         response.status,
@@ -81,4 +78,19 @@ export class IngestClient {
 
     return body as HoopCentralIngestResponse;
   }
+}
+
+function formatIngestError(body: unknown, text: string, statusText: string): string {
+  if (body && typeof body === "object" && "error" in body) {
+    const err = (body as { error: unknown }).error;
+    if (typeof err === "string") return err;
+    if (err && typeof err === "object") {
+      const obj = err as { message?: unknown; code?: unknown };
+      if (typeof obj.message === "string") {
+        return typeof obj.code === "string" ? `${obj.code}: ${obj.message}` : obj.message;
+      }
+      return JSON.stringify(err);
+    }
+  }
+  return text || statusText;
 }

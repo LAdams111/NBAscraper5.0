@@ -5,18 +5,20 @@ import type {
 } from "./types.js";
 
 export function toIngestPayload(record: NbaPlayerSeasonRecord): HoopCentralIngestPayload {
+  const player: HoopCentralIngestPayload["player"] = {
+    displayName: record.displayName,
+  };
+  if (record.birthDate) player.birthDate = record.birthDate;
+  if (record.position) player.position = record.position;
+  if (record.heightCm != null) player.heightCm = record.heightCm;
+  if (record.weightKg != null) player.weightKg = record.weightKg;
+  if (record.hometown) player.hometown = record.hometown;
+  if (record.headshotUrl) player.headshotUrl = record.headshotUrl;
+
   return {
     source: record.source,
     externalId: record.externalId,
-    player: {
-      displayName: record.displayName,
-      birthDate: record.birthDate,
-      position: record.position,
-      heightCm: record.heightCm,
-      weightKg: record.weightKg,
-      hometown: record.hometown,
-      headshotUrl: record.headshotUrl,
-    },
+    player,
     league: {
       slug: record.leagueSlug,
       name: record.leagueName,
