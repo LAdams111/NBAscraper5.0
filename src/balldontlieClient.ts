@@ -125,11 +125,12 @@ export class BalldontlieClient {
   async getGameStatsForSeason(
     playerId: number,
     seasonYear: number,
+    maxPages = 1,
   ): Promise<BdlGameStat[]> {
     const stats: BdlGameStat[] = [];
     let cursor: number | undefined;
 
-    for (;;) {
+    for (let pageNum = 0; pageNum < maxPages; pageNum += 1) {
       const query: Record<string, string> = {
         "seasons[]": String(seasonYear),
         "player_ids[]": String(playerId),

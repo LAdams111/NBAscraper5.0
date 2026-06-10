@@ -79,9 +79,6 @@ export async function runScrape(
 
     for (const seasonYear of seasonYears) {
       const record = await fetchPlayerSeasonRecord(bdl, player, seasonYear);
-      if (requestDelayMs > 0) {
-        await sleep(requestDelayMs);
-      }
 
       if (!record) {
         skipped += 1;
@@ -143,6 +140,12 @@ export async function runScrape(
       if (requestDelayMs > 0) {
         await sleep(requestDelayMs);
       }
+    }
+
+    if ((p + 1) % 25 === 0) {
+      console.log(
+        `Completed ${p + 1}/${players.length} players — ingested=${ingested} skipped=${skipped}`,
+      );
     }
   }
 
