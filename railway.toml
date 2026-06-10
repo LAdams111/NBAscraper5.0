@@ -1,0 +1,7 @@
+[build]
+buildCommand = "npm run build"
+
+[deploy]
+# Override in Railway dashboard for cron jobs, e.g.:
+# node dist/index.js --test --season 2024-25
+startCommand = "npm start"

@@ -139,13 +139,33 @@ Team slugs are generated to match Hoop Central's `nameToSlug` convention (e.g. `
 
 ## Production (Railway)
 
-This is a command-style scraper, not a long-running server.
+This is a **command-style scraper**, not a long-running web server.
 
-- Set env vars on Railway: `HOOP_CENTRAL_API_URL`, `INGEST_API_KEY`, `BALLDONTLIE_API_KEY`
-- Start command: `npm run scrape -- --all-players --season 2024-25`
-- Or schedule via Railway cron / GitHub Actions
+### Build fix
 
-**Always test with `--test` or `--limit` before a full league run.**
+Railway needs a Node entry point. This repo provides:
+
+- `"main": "dist/index.js"`
+- `"build": "tsc"`
+- `"start": "node dist/index.js"`
+
+### Deploy steps
+
+1. Connect the GitHub repo on Railway
+2. Set environment variables: `HOOP_CENTRAL_API_URL`, `INGEST_API_KEY`, `BALLDONTLIE_API_KEY`
+3. **Recommended:** deploy as a **Cron Job** (not a web service), with a custom command such as:
+
+   ```
+   node dist/index.js --test --season 2024-25
+   ```
+
+4. For a full daily scrape once tested:
+
+   ```
+   node dist/index.js --all-players --season 2024-25
+   ```
+
+If deployed as a web service, the default `npm start` prints CLI help and exits — use a **custom start command** in Railway settings instead.
 
 ## Future: all-time NBA players
 

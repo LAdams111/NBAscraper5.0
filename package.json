@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "NBA player-season scraper for Hoop Central via balldontlie API",
   "type": "module",
+  "main": "dist/index.js",
   "engines": {
     "node": ">=20"
   },
@@ -10,8 +11,10 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "scrape": "tsx src/index.ts",
-    "scrape:dry-run": "tsx src/index.ts --dry-run"
+    "start": "node dist/index.js",
+    "scrape": "node dist/index.js",
+    "scrape:dev": "tsx src/index.ts",
+    "scrape:dry-run": "node dist/index.js --dry-run"
   },
   "dependencies": {
     "dotenv": "^16.4.7"
