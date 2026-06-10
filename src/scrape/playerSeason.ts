@@ -74,6 +74,8 @@ export async function fetchPlayerSeasonRecord(
     pointsPerGame: round1(averages.pts),
     reboundsPerGame: round1(averages.reb),
     assistsPerGame: round1(averages.ast),
+    stealsPerGame: round1(averages.stl),
+    blocksPerGame: round1(averages.blk),
   });
 }
 

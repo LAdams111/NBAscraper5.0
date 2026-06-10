@@ -49,6 +49,8 @@ export function buildPlayerSeasonRecord(input: {
   pointsPerGame: number;
   reboundsPerGame: number;
   assistsPerGame: number;
+  stealsPerGame: number;
+  blocksPerGame: number;
 }): NbaPlayerSeasonRecord {
   const team = resolveTeam(input.teamFullName, input.teamAbbreviation);
 
@@ -75,6 +77,8 @@ export function buildPlayerSeasonRecord(input: {
       pointsPerGame: input.pointsPerGame,
       reboundsPerGame: input.reboundsPerGame,
       assistsPerGame: input.assistsPerGame,
+      stealsPerGame: input.stealsPerGame,
+      blocksPerGame: input.blocksPerGame,
     },
   };
 }

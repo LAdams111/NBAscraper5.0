@@ -93,6 +93,8 @@ export interface NbaPlayerSeasonRecord {
     pointsPerGame: number;
     reboundsPerGame: number;
     assistsPerGame: number;
+    stealsPerGame: number;
+    blocksPerGame: number;
   };
 }
 
@@ -126,6 +128,8 @@ export interface HoopCentralIngestPayload {
     pointsPerGame: number;
     reboundsPerGame: number;
     assistsPerGame: number;
+    stealsPerGame: number;
+    blocksPerGame: number;
   };
 }
 
