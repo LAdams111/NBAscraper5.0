@@ -146,6 +146,7 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
   if (backfill) {
     allPlayers = true;
     allSeasons = true;
+    requestDelayMs = 0;
     const current = currentSeasonDefaults();
     seasonLabel = current.seasonLabel;
     bdlSeasonYear = current.bdlSeasonYear;
@@ -154,6 +155,7 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
   if (daily) {
     allPlayers = true;
     allSeasons = false;
+    requestDelayMs = requestDelayMs ?? 50;
     const current = currentSeasonDefaults();
     seasonLabel = current.seasonLabel;
     bdlSeasonYear = current.bdlSeasonYear;
@@ -185,6 +187,8 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
     limit,
     dryRun,
     requestDelayMs,
+    seasonConcurrency: backfill ? 16 : undefined,
+    ingestConcurrency: backfill ? 8 : undefined,
     health,
     showHelp,
   };

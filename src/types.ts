@@ -179,4 +179,8 @@ export interface ScrapeOptions {
   limit?: number;
   dryRun: boolean;
   requestDelayMs?: number;
+  /** Parallel balldontlie season fetches per player (backfill default: 16). */
+  seasonConcurrency?: number;
+  /** Parallel ingest POSTs (backfill default: 8). */
+  ingestConcurrency?: number;
 }

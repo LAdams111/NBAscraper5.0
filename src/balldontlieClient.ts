@@ -125,8 +125,10 @@ export class BalldontlieClient {
   async getGameStatsForSeason(
     playerId: number,
     seasonYear: number,
-    maxPages = 1,
+    options: { maxPages?: number; perPage?: number } = {},
   ): Promise<BdlGameStat[]> {
+    const maxPages = options.maxPages ?? 1;
+    const perPage = options.perPage ?? 1;
     const stats: BdlGameStat[] = [];
     let cursor: number | undefined;
 
@@ -134,7 +136,7 @@ export class BalldontlieClient {
       const query: Record<string, string> = {
         "seasons[]": String(seasonYear),
         "player_ids[]": String(playerId),
-        per_page: "100",
+        per_page: String(perPage),
       };
       if (cursor !== undefined) {
         query.cursor = String(cursor);
