@@ -63,7 +63,13 @@ export async function runScrape(
       if (!record) continue;
       payloads.push(toIngestPayload(record));
     }
+
+    if (payloads.length > 0 && payloads.length % 25 === 0) {
+      console.log(`Prepared ${payloads.length} player-season payloads so far...`);
+    }
   }
+
+  console.log(`Ready to ingest ${payloads.length} player-season records.`);
 
   const results: ScrapeResultItem[] = [];
   let createdPlayers = 0;

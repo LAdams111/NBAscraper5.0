@@ -119,10 +119,16 @@ export async function collectTargetPlayers(
 ): Promise<BdlPlayer[]> {
   if (options.allPlayers) {
     const players: BdlPlayer[] = [];
+    let page = 0;
     for await (const player of client.listAllPlayers()) {
       players.push(player);
+      page += 1;
+      if (page % 500 === 0) {
+        console.log(`Fetched ${page} players from balldontlie...`);
+      }
       if (options.limit && players.length >= options.limit) break;
     }
+    console.log(`Fetched ${players.length} total players from balldontlie.`);
     return players;
   }
 
