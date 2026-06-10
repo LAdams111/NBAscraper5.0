@@ -19,6 +19,13 @@ function formatLabel(payload: HoopCentralIngestPayload): string {
   return `${payload.player.displayName} ${payload.season.label} ${payload.team.name}`;
 }
 
+function modeLabel(options: ScrapeOptions): string {
+  if (options.scrapeMode === "backfill") return "backfill (all players, full career)";
+  if (options.scrapeMode === "daily") return "daily (all players, current season only)";
+  if (options.allSeasons) return "custom (all seasons through target)";
+  return "custom (single season)";
+}
+
 export async function runScrape(
   config: AppConfig,
   options: ScrapeOptions,
@@ -26,6 +33,10 @@ export async function runScrape(
   const requestDelayMs = options.requestDelayMs ?? config.requestDelayMs;
   const bdl = new BalldontlieClient(config.balldontlieApiKey);
   const ingest = new IngestClient(config.hoopCentralApiUrl, config.ingestApiKey);
+
+  console.log(`Job: ${modeLabel(options)}`);
+  console.log(`Target season through: ${options.seasonLabel}`);
+  console.log("");
 
   if (!options.dryRun) {
     const health = await ingest.healthCheck();
@@ -46,92 +57,100 @@ export async function runScrape(
   console.log(`Loaded ${players.length} player(s) to process`);
   console.log("");
 
-  const payloads: HoopCentralIngestPayload[] = [];
+  const results: ScrapeResultItem[] = [];
+  let createdPlayers = 0;
+  let reusedPlayers = 0;
+  let ingested = 0;
+  let skipped = 0;
+  let resultIndex = 0;
 
-  for (const player of players) {
+  for (let p = 0; p < players.length; p += 1) {
+    const player = players[p];
+    const playerName = `${player.first_name} ${player.last_name}`.trim();
     const seasonYears = seasonsForPlayer(
       player,
       options.bdlSeasonYear,
       options.allSeasons,
     );
 
+    if ((p + 1) % 100 === 0 || p === 0) {
+      console.log(`Processing player ${p + 1}/${players.length}: ${playerName}`);
+    }
+
     for (const seasonYear of seasonYears) {
       const record = await fetchPlayerSeasonRecord(bdl, player, seasonYear);
       if (requestDelayMs > 0) {
         await sleep(requestDelayMs);
       }
-      if (!record) continue;
-      payloads.push(toIngestPayload(record));
-    }
 
-    if (payloads.length > 0 && payloads.length % 25 === 0) {
-      console.log(`Prepared ${payloads.length} player-season payloads so far...`);
-    }
-  }
+      if (!record) {
+        skipped += 1;
+        continue;
+      }
 
-  console.log(`Ready to ingest ${payloads.length} player-season records.`);
+      const payload = toIngestPayload(record);
+      resultIndex += 1;
+      const label = formatLabel(payload);
 
-  const results: ScrapeResultItem[] = [];
-  let createdPlayers = 0;
-  let reusedPlayers = 0;
+      if (options.dryRun) {
+        console.log(`[dry-run] ${label}`);
+        results.push({
+          index: resultIndex,
+          total: resultIndex,
+          label,
+          payload,
+          status: "success",
+        });
+        ingested += 1;
+        continue;
+      }
 
-  for (let i = 0; i < payloads.length; i += 1) {
-    const payload = payloads[i];
-    const label = formatLabel(payload);
-    const index = i + 1;
-    const total = payloads.length;
+      try {
+        const response = await ingest.sendPlayerSeason(payload);
+        const reusedPlayer = !response.created.player;
+        if (response.created.player) createdPlayers += 1;
+        else reusedPlayers += 1;
+        ingested += 1;
 
-    if (options.dryRun) {
-      console.log(`[${index}/${total}] ${label}`);
-      console.log(JSON.stringify(payload, null, 2));
-      results.push({ index, total, label, payload, status: "success" });
-      continue;
-    }
+        if (ingested % 50 === 0) {
+          console.log(
+            `[progress] ingested=${ingested} skipped=${skipped} failed=${results.filter((r) => r.status === "failed").length} latest=${label}`,
+          );
+        }
 
-    console.log(`[${index}/${total}] ${label}`);
+        results.push({
+          index: resultIndex,
+          total: resultIndex,
+          label,
+          payload,
+          status: "success",
+          playerId: response.playerId,
+          reusedPlayer,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`→ failed ${label}: ${message}`);
+        results.push({
+          index: resultIndex,
+          total: resultIndex,
+          label,
+          payload,
+          status: "failed",
+          error: message,
+        });
+      }
 
-    try {
-      const response = await ingest.sendPlayerSeason(payload);
-      const reusedPlayer = !response.created.player;
-      if (response.created.player) createdPlayers += 1;
-      else reusedPlayers += 1;
-
-      console.log(
-        `→ success playerId=${response.playerId} reusedPlayer=${reusedPlayer}`,
-      );
-
-      results.push({
-        index,
-        total,
-        label,
-        payload,
-        status: "success",
-        playerId: response.playerId,
-        reusedPlayer,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(`→ failed ${message}`);
-      results.push({
-        index,
-        total,
-        label,
-        payload,
-        status: "failed",
-        error: message,
-      });
-    }
-
-    if (requestDelayMs > 0) {
-      await sleep(requestDelayMs);
+      if (requestDelayMs > 0) {
+        await sleep(requestDelayMs);
+      }
     }
   }
 
   const summary: ScrapeSummary = {
-    total: results.length,
+    total: ingested + results.filter((r) => r.status === "failed").length,
     success: results.filter((r) => r.status === "success").length,
     failed: results.filter((r) => r.status === "failed").length,
-    skipped: 0,
+    skipped,
     createdPlayers,
     reusedPlayers,
   };
@@ -142,11 +161,11 @@ export async function runScrape(
 export function printSummary(summary: ScrapeSummary, dryRun: boolean): void {
   console.log("");
   console.log("Finished");
-  console.log(`Total payloads: ${summary.total}`);
-  console.log(`Successful: ${summary.success}`);
+  console.log(`Ingested: ${summary.success}`);
+  console.log(`Skipped (no stats): ${summary.skipped}`);
   console.log(`Failed: ${summary.failed}`);
   if (!dryRun) {
-    console.log(`Created players: ${summary.createdPlayers}`);
-    console.log(`Reused players: ${summary.reusedPlayers}`);
+    console.log(`New players created: ${summary.createdPlayers}`);
+    console.log(`Existing players reused: ${summary.reusedPlayers}`);
   }
 }

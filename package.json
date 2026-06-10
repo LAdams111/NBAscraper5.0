@@ -13,6 +13,8 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "scrape": "node dist/index.js",
+    "scrape:backfill": "node dist/index.js --backfill",
+    "scrape:daily": "node dist/index.js --daily",
     "scrape:dev": "tsx src/index.ts",
     "scrape:dry-run": "node dist/index.js --dry-run"
   },

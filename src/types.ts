@@ -162,14 +162,16 @@ export interface ScrapeSummary {
   reusedPlayers: number;
 }
 
+export type ScrapeMode = "backfill" | "daily" | "custom";
+
 export interface ScrapeOptions {
+  scrapeMode: ScrapeMode;
   seasonLabel: string;
   bdlSeasonYear: number;
   playerIds?: number[];
   searchNames?: string[];
   allPlayers: boolean;
   allSeasons: boolean;
-  careerForPlayerIds?: number[];
   limit?: number;
   dryRun: boolean;
   requestDelayMs?: number;

@@ -1,50 +1,64 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
 import { runScrape, printSummary } from "./scrape/runner.js";
-import type { ScrapeOptions } from "./types.js";
-import { currentBdlSeasonYear, parseSeasonArg } from "./utils/season.js";
+import type { ScrapeMode, ScrapeOptions } from "./types.js";
+import { currentBdlSeasonYear, parseSeasonArg, bdlSeasonToLabel } from "./utils/season.js";
 
 const TEST_PLAYER_IDS = [237, 115, 246, 56677822]; // LeBron, Curry, Jokic, Wembanyama
 
+function currentSeasonDefaults() {
+  const bdlSeasonYear = currentBdlSeasonYear();
+  return {
+    bdlSeasonYear,
+    seasonLabel: bdlSeasonToLabel(bdlSeasonYear),
+  };
+}
+
 function printUsage(): void {
+  const { seasonLabel } = currentSeasonDefaults();
   console.log(`Scraper-NBA — balldontlie → Hoop Central ingest
 
 Usage:
   npm run scrape -- [options]
 
-Options:
-  --dry-run              Normalize and print payloads; do not POST
+Primary jobs:
+  --backfill             ONE-TIME: all ~5,500 players, every season through current
+  --daily                DAILY: all players, current season (${seasonLabel}) only
+
+Other options:
+  --dry-run              Print payloads; do not POST
   --health               Check Hoop Central /api/health and exit
-  --season <label>       Season (default: current). e.g. 2024-25 or 2024
+  --season <label>       Override season (default: current)
   --player-ids <ids>     Comma-separated balldontlie player IDs
   --search <names>       Comma-separated player name searches
-  --test                 Shortcut for default test players (LeBron, Curry, Jokic, Wembanyama)
-  --all-players          Scrape every player balldontlie returns (use with --limit first!)
-  --all-seasons          For each player, attempt every season from draft year through target
-  --limit <n>            Cap number of players processed
-  --delay <ms>           Delay between API calls (overrides SCRAPE_REQUEST_DELAY_MS)
+  --test                 Shortcut for 4 test players
+  --all-players          All balldontlie players (included in --backfill/--daily)
+  --all-seasons          Full career through target season (included in --backfill)
+  --limit <n>            Cap players processed (testing)
+  --delay <ms>           Delay between API calls
 
-Safety:
-  Running npm run scrape with NO player flags does nothing (prints this help).
-  Use --test or --player-ids for a small test run before --all-players.
+Idempotency:
+  Uses source "balldontlie" + stable player ID. Re-running never duplicates
+  players, stints, or stats — Hoop Central upserts by identity + season + team.
 
 Examples:
-  npm run scrape:dry-run -- --test --season 2024-25
-  npm run scrape -- --test --season 2024-25
-  npm run scrape -- --player-ids 237 --season 2024-25
-  npm run scrape -- --search "LeBron James" --dry-run
-  npm run scrape -- --all-players --limit 10 --season 2024-25 --dry-run
+  npm run scrape:backfill              # one-time full history (long!)
+  npm run scrape:daily                 # current season only
+  npm run scrape:dry-run -- --test
+  npm run scrape -- --backfill --limit 5 --dry-run
 `);
 }
 
 function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp: boolean } {
-  const current = currentBdlSeasonYear();
-  let seasonLabel = `${current}-${String((current + 1) % 100).padStart(2, "0")}`;
-  let bdlSeasonYear = current;
+  const defaults = currentSeasonDefaults();
+  let seasonLabel = defaults.seasonLabel;
+  let bdlSeasonYear = defaults.bdlSeasonYear;
   let dryRun = false;
   let health = false;
   let allPlayers = false;
   let allSeasons = false;
+  let backfill = false;
+  let daily = false;
   let testMode = false;
   let playerIds: number[] | undefined;
   let searchNames: string[] | undefined;
@@ -64,6 +78,12 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
         break;
       case "--health":
         health = true;
+        break;
+      case "--backfill":
+        backfill = true;
+        break;
+      case "--daily":
+        daily = true;
         break;
       case "--all-players":
         allPlayers = true;
@@ -119,6 +139,26 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
     }
   }
 
+  if (backfill && daily) {
+    throw new Error("Use either --backfill or --daily, not both");
+  }
+
+  if (backfill) {
+    allPlayers = true;
+    allSeasons = true;
+    const current = currentSeasonDefaults();
+    seasonLabel = current.seasonLabel;
+    bdlSeasonYear = current.bdlSeasonYear;
+  }
+
+  if (daily) {
+    allPlayers = true;
+    allSeasons = false;
+    const current = currentSeasonDefaults();
+    seasonLabel = current.seasonLabel;
+    bdlSeasonYear = current.bdlSeasonYear;
+  }
+
   if (testMode) {
     playerIds = TEST_PLAYER_IDS;
   }
@@ -130,7 +170,12 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
     showHelp = true;
   }
 
+  let scrapeMode: ScrapeMode = "custom";
+  if (backfill) scrapeMode = "backfill";
+  else if (daily) scrapeMode = "daily";
+
   return {
+    scrapeMode,
     seasonLabel,
     bdlSeasonYear,
     playerIds,
@@ -163,7 +208,6 @@ async function main(): Promise<void> {
   console.log("Starting Scraper-NBA");
   console.log(`Target: ${config.hoopCentralApiUrl}`);
   console.log(`Mode: ${args.dryRun ? "dry-run" : "live ingest"}`);
-  console.log(`Season: ${args.seasonLabel} (balldontlie year ${args.bdlSeasonYear})`);
   console.log("");
 
   if (args.health) {

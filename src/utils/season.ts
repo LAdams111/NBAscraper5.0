@@ -30,7 +30,7 @@ export function careerSeasonYears(
   draftYear: number | null | undefined,
   throughBdlYear: number,
 ): number[] {
-  const start = draftYear && draftYear > 1946 ? draftYear : 1946;
+  const start = draftYear && draftYear > 1946 ? draftYear : 1976;
   const years: number[] = [];
   for (let y = start; y <= throughBdlYear; y += 1) {
     years.push(y);
