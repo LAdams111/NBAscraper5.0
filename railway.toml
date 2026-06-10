@@ -3,7 +3,7 @@ buildCommand = "npm ci && npm run build"
 
 [deploy]
 # Runs once per deploy / cron tick, then exits (not a long-lived web server).
-startCommand = "node dist/index.js --test --season 2024-25"
+startCommand = "node dist/index.js --all-players --season 2024-25"
 restartPolicyType = "NEVER"
 
 # Uncomment when you're ready for daily auto-scrape (06:00 UTC):
