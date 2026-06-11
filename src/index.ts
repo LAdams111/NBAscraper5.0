@@ -247,6 +247,7 @@ async function main(): Promise<void> {
     ? await runRepairFailed(config, {
         dryRun: scrapeOptions.dryRun,
         logPath: scrapeOptions.logPath,
+        requestDelayMs: scrapeOptions.requestDelayMs,
       })
     : (await runScrape(config, scrapeOptions)).summary;
 
