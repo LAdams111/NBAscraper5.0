@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
+import { runRepairFailed } from "./scrape/repairFailed.js";
 import { runScrape, printSummary } from "./scrape/runner.js";
 import type { ScrapeMode, ScrapeOptions } from "./types.js";
 import { currentBdlSeasonYear, parseSeasonArg, bdlSeasonToLabel } from "./utils/season.js";
@@ -36,6 +37,12 @@ Other options:
   --all-seasons          Full career through target season (included in --backfill)
   --limit <n>            Cap players processed (testing)
   --delay <ms>           Delay between API calls
+  --fresh                Ignore checkpoint and reprocess all players
+  --repair-failed        Re-ingest season rows that failed in scrape-backfill.log
+
+Resume:
+  --backfill auto-resumes from scrape-backfill.checkpoint.json (or bootstraps
+  from scrape-backfill.log). Completed players are skipped; ingest is idempotent.
 
 Idempotency:
   Uses source "balldontlie" + stable player ID. Re-running never duplicates
@@ -65,6 +72,8 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
   let limit: number | undefined;
   let requestDelayMs: number | undefined;
   let showHelp = false;
+  let fresh = false;
+  let repairFailed = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -134,6 +143,12 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
         }
         break;
       }
+      case "--fresh":
+        fresh = true;
+        break;
+      case "--repair-failed":
+        repairFailed = true;
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -166,7 +181,10 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
   }
 
   const hasPlayerSelection =
-    allPlayers || (playerIds?.length ?? 0) > 0 || (searchNames?.length ?? 0) > 0;
+    allPlayers ||
+    (playerIds?.length ?? 0) > 0 ||
+    (searchNames?.length ?? 0) > 0 ||
+    repairFailed;
 
   if (!health && !showHelp && !hasPlayerSelection) {
     showHelp = true;
@@ -187,8 +205,11 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
     limit,
     dryRun,
     requestDelayMs,
-    seasonConcurrency: backfill ? 16 : undefined,
-    ingestConcurrency: backfill ? 8 : undefined,
+    seasonConcurrency: backfill ? 4 : undefined,
+    ingestConcurrency: backfill ? 1 : undefined,
+    resume: backfill ? true : undefined,
+    fresh: fresh || undefined,
+    repairFailed: repairFailed || undefined,
     health,
     showHelp,
   };
@@ -222,7 +243,13 @@ async function main(): Promise<void> {
     process.exit(result.ok ? 0 : 1);
   }
 
-  const { summary } = await runScrape(config, scrapeOptions);
+  const summary = scrapeOptions.repairFailed
+    ? await runRepairFailed(config, {
+        dryRun: scrapeOptions.dryRun,
+        logPath: scrapeOptions.logPath,
+      })
+    : (await runScrape(config, scrapeOptions)).summary;
+
   printSummary(summary, scrapeOptions.dryRun);
   process.exit(summary.failed > 0 ? 1 : 0);
 }
