@@ -9,6 +9,11 @@ import {
   careerSeasonYears,
   round1,
 } from "../utils/season.js";
+import {
+  DEFAULT_PLAYER_CACHE,
+  loadPlayerCache,
+  savePlayerCache,
+} from "./playerCache.js";
 import { heightToCm, normalizePosition, weightToKg } from "../utils/physical.js";
 import { resolveTeam } from "../utils/teams.js";
 
@@ -117,9 +122,22 @@ export async function collectTargetPlayers(
     searchNames?: string[];
     allPlayers: boolean;
     limit?: number;
+    playerCachePath?: string;
+    refreshPlayerCache?: boolean;
   },
 ): Promise<BdlPlayer[]> {
   if (options.allPlayers) {
+    const cachePath = options.playerCachePath ?? DEFAULT_PLAYER_CACHE;
+
+    if (!options.refreshPlayerCache) {
+      const cached = loadPlayerCache(cachePath);
+      if (cached?.length) {
+        console.log(`Loaded ${cached.length} players from cache (${cachePath}).`);
+        if (options.limit) return cached.slice(0, options.limit);
+        return cached;
+      }
+    }
+
     const players: BdlPlayer[] = [];
     let page = 0;
     for await (const player of client.listAllPlayers()) {
@@ -131,6 +149,8 @@ export async function collectTargetPlayers(
       if (options.limit && players.length >= options.limit) break;
     }
     console.log(`Fetched ${players.length} total players from balldontlie.`);
+    savePlayerCache(cachePath, players);
+    console.log(`Saved player cache to ${cachePath}.`);
     return players;
   }
 

@@ -37,6 +37,9 @@ Other options:
   --all-seasons          Full career through target season (included in --backfill)
   --limit <n>            Cap players processed (testing)
   --delay <ms>           Delay between API calls
+  --player-concurrency <n>  Parallel players (backfill default: 8)
+  --season-concurrency <n>  Parallel season fetches per player (backfill: 8)
+  --ingest-concurrency <n>  Parallel ingests per player (backfill: 4)
   --fresh                Ignore checkpoint and reprocess all players
   --repair-failed        Re-ingest season rows that failed in scrape-backfill.log
 
@@ -74,6 +77,9 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
   let showHelp = false;
   let fresh = false;
   let repairFailed = false;
+  let playerConcurrency: number | undefined;
+  let seasonConcurrency: number | undefined;
+  let ingestConcurrency: number | undefined;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -149,6 +155,33 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
       case "--repair-failed":
         repairFailed = true;
         break;
+      case "--player-concurrency": {
+        const value = argv[++i];
+        if (!value) throw new Error("--player-concurrency requires a value");
+        playerConcurrency = Number.parseInt(value, 10);
+        if (Number.isNaN(playerConcurrency) || playerConcurrency <= 0) {
+          throw new Error(`Invalid player concurrency: ${value}`);
+        }
+        break;
+      }
+      case "--season-concurrency": {
+        const value = argv[++i];
+        if (!value) throw new Error("--season-concurrency requires a value");
+        seasonConcurrency = Number.parseInt(value, 10);
+        if (Number.isNaN(seasonConcurrency) || seasonConcurrency <= 0) {
+          throw new Error(`Invalid season concurrency: ${value}`);
+        }
+        break;
+      }
+      case "--ingest-concurrency": {
+        const value = argv[++i];
+        if (!value) throw new Error("--ingest-concurrency requires a value");
+        ingestConcurrency = Number.parseInt(value, 10);
+        if (Number.isNaN(ingestConcurrency) || ingestConcurrency <= 0) {
+          throw new Error(`Invalid ingest concurrency: ${value}`);
+        }
+        break;
+      }
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -205,8 +238,9 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
     limit,
     dryRun,
     requestDelayMs,
-    seasonConcurrency: backfill ? 4 : undefined,
-    ingestConcurrency: backfill ? 1 : undefined,
+    playerConcurrency: playerConcurrency ?? (backfill ? 8 : undefined),
+    seasonConcurrency: seasonConcurrency ?? (backfill ? 8 : undefined),
+    ingestConcurrency: ingestConcurrency ?? (backfill ? 4 : undefined),
     resume: backfill ? true : undefined,
     fresh: fresh || undefined,
     repairFailed: repairFailed || undefined,

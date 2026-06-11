@@ -27,6 +27,8 @@ export interface AppConfig {
   ingestApiKey: string | null;
   balldontlieApiKey: string;
   requestDelayMs: number;
+  /** Max balldontlie requests per minute (GOAT: 600, ALL-STAR: 60). */
+  balldontlieRequestsPerMinute: number;
 }
 
 export function loadConfig(): AppConfig {
@@ -48,5 +50,9 @@ export function loadConfig(): AppConfig {
     ingestApiKey,
     balldontlieApiKey,
     requestDelayMs: parseOptionalInt(process.env.SCRAPE_REQUEST_DELAY_MS, 0),
+    balldontlieRequestsPerMinute: parseOptionalInt(
+      process.env.BALLDONTLIE_REQUESTS_PER_MINUTE,
+      55,
+    ),
   };
 }

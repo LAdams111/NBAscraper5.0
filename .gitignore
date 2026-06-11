@@ -140,3 +140,5 @@ vite.config.ts.timestamp-*
 .vite/
 
 .DS_Store
+scrape-backfill.checkpoint.json
+scrape-players.cache.json

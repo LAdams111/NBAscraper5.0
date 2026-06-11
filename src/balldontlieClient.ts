@@ -5,6 +5,7 @@ import type {
   BdlSeasonAverages,
   BdlSingleResponse,
 } from "./types.js";
+import type { RateLimiter } from "./utils/rateLimiter.js";
 
 const BASE_URL = "https://api.balldontlie.io";
 
@@ -20,7 +21,16 @@ export class BalldontlieApiError extends Error {
 }
 
 export class BalldontlieClient {
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    private readonly rateLimiter?: RateLimiter,
+  ) {}
+
+  private static readonly RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   private async request<T>(path: string, query?: Record<string, string>): Promise<T> {
     const url = new URL(path, BASE_URL);
@@ -30,46 +40,78 @@ export class BalldontlieClient {
       }
     }
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        headers: {
-          Authorization: this.apiKey,
-          Accept: "application/json",
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new BalldontlieApiError(`Network error calling balldontlie: ${message}`);
-    }
+    const maxAttempts = 10;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (this.rateLimiter) {
+        await this.rateLimiter.acquire();
+      }
 
-    const text = await response.text();
-    let body: unknown = null;
-    if (text) {
+      let response: Response;
       try {
-        body = JSON.parse(text) as unknown;
-      } catch {
+        response = await fetch(url, {
+          headers: {
+            Authorization: this.apiKey,
+            Accept: "application/json",
+          },
+        });
+      } catch (error) {
+        if (attempt < maxAttempts) {
+          await this.sleep(Math.min(60_000, 2000 * 2 ** (attempt - 1)));
+          continue;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw new BalldontlieApiError(`Network error calling balldontlie: ${message}`);
+      }
+
+      const retryAfterHeader = response.headers.get("Retry-After");
+      const retryAfterMs = retryAfterHeader
+        ? Math.max(1000, Number.parseInt(retryAfterHeader, 10) * 1000 || 5000)
+        : Math.min(60_000, 2000 * 2 ** (attempt - 1));
+
+      const text = await response.text();
+      let body: unknown = null;
+      if (text) {
+        try {
+          body = JSON.parse(text) as unknown;
+        } catch {
+          if (
+            BalldontlieClient.RETRYABLE_STATUSES.has(response.status) &&
+            attempt < maxAttempts
+          ) {
+            await this.sleep(retryAfterMs);
+            continue;
+          }
+          throw new BalldontlieApiError(
+            `Invalid JSON from balldontlie (${response.status})`,
+            response.status,
+            text,
+          );
+        }
+      }
+
+      if (!response.ok) {
+        if (
+          BalldontlieClient.RETRYABLE_STATUSES.has(response.status) &&
+          attempt < maxAttempts
+        ) {
+          await this.sleep(retryAfterMs);
+          continue;
+        }
+        const detail =
+          body && typeof body === "object" && "error" in body
+            ? String((body as { error: unknown }).error)
+            : text || response.statusText;
         throw new BalldontlieApiError(
-          `Invalid JSON from balldontlie (${response.status})`,
+          `balldontlie API error ${response.status}: ${detail}`,
           response.status,
-          text,
+          body,
         );
       }
+
+      return body as T;
     }
 
-    if (!response.ok) {
-      const detail =
-        body && typeof body === "object" && "error" in body
-          ? String((body as { error: unknown }).error)
-          : text || response.statusText;
-      throw new BalldontlieApiError(
-        `balldontlie API error ${response.status}: ${detail}`,
-        response.status,
-        body,
-      );
-    }
-
-    return body as T;
+    throw new BalldontlieApiError("balldontlie request failed after retries");
   }
 
   async getPlayer(playerId: number): Promise<BdlPlayer> {

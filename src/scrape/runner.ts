@@ -2,6 +2,7 @@ import { BalldontlieClient } from "../balldontlieClient.js";
 import { IngestClient } from "../ingestClient.js";
 import { toIngestPayload } from "../transform.js";
 import type { AppConfig } from "../config.js";
+import type { BdlPlayer } from "../types.js";
 import type {
   HoopCentralIngestPayload,
   NbaPlayerSeasonRecord,
@@ -9,8 +10,10 @@ import type {
   ScrapeResultItem,
   ScrapeSummary,
 } from "../types.js";
+import { AsyncMutex } from "../utils/asyncMutex.js";
 import { mapWithConcurrency } from "../utils/concurrency.js";
-import { sleep, bdlSeasonToLabel } from "../utils/season.js";
+import { RateLimiter } from "../utils/rateLimiter.js";
+import { bdlSeasonToLabel } from "../utils/season.js";
 import {
   DEFAULT_BACKFILL_CHECKPOINT,
   DEFAULT_BACKFILL_LOG,
@@ -63,24 +66,162 @@ async function ingestPayload(
   }
 }
 
+interface PlayerJobResult {
+  player: BdlPlayer;
+  playerIndex: number;
+  playerName: string;
+  playerSucceeded: number;
+  playerFailed: number;
+  playerSkipped: number;
+  createdPlayers: number;
+  reusedPlayers: number;
+  results: ScrapeResultItem[];
+  shouldCheckpoint: boolean;
+  elapsedMs: number;
+}
+
+async function processPlayer(
+  player: BdlPlayer,
+  playerIndex: number,
+  totalPlayers: number,
+  options: ScrapeOptions,
+  bdl: BalldontlieClient,
+  ingest: IngestClient,
+): Promise<PlayerJobResult> {
+  const playerName = `${player.first_name} ${player.last_name}`.trim();
+  const seasonYears = seasonsForPlayer(
+    player,
+    options.bdlSeasonYear,
+    options.allSeasons,
+  );
+  const seasonConcurrency = options.seasonConcurrency ?? 1;
+  const ingestConcurrency = options.ingestConcurrency ?? 1;
+
+  const playerStarted = Date.now();
+  console.log(
+    `Processing player ${playerIndex + 1}/${totalPlayers}: ${playerName} (${seasonYears.length} seasons to check)`,
+  );
+
+  const records = await mapWithConcurrency(
+    seasonYears,
+    seasonConcurrency,
+    async (seasonYear) => {
+      try {
+        return await fetchPlayerSeasonRecord(bdl, player, seasonYear);
+      } catch (error) {
+        const label = `${playerName} ${bdlSeasonToLabel(seasonYear)}`;
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`→ fetch failed ${label}: ${message}`);
+        return null;
+      }
+    },
+  );
+
+  const toIngest: NbaPlayerSeasonRecord[] = [];
+  let playerSkipped = 0;
+  for (const record of records) {
+    if (record) toIngest.push(record);
+    else playerSkipped += 1;
+  }
+
+  let playerFailed = 0;
+  let playerSucceeded = 0;
+  let createdPlayers = 0;
+  let reusedPlayers = 0;
+  const results: ScrapeResultItem[] = [];
+
+  if (toIngest.length > 0) {
+    const ingestResults = await mapWithConcurrency(
+      toIngest,
+      ingestConcurrency,
+      async (record) => {
+        const payload = toIngestPayload(record);
+        const outcome = await ingestPayload(ingest, payload, options.dryRun);
+        return { payload, outcome };
+      },
+    );
+
+    for (const { payload, outcome } of ingestResults) {
+      const label = formatLabel(payload);
+
+      if (outcome.status === "success") {
+        playerSucceeded += 1;
+        if (outcome.reusedPlayer === false) createdPlayers += 1;
+        else if (outcome.reusedPlayer === true) reusedPlayers += 1;
+
+        results.push({
+          index: 0,
+          total: 0,
+          label,
+          payload,
+          status: "success",
+          playerId: outcome.playerId,
+          reusedPlayer: outcome.reusedPlayer,
+        });
+      } else {
+        playerFailed += 1;
+        console.log(`→ failed ${label}: ${outcome.error}`);
+        results.push({
+          index: 0,
+          total: 0,
+          label,
+          payload,
+          status: "failed",
+          error: outcome.error,
+        });
+      }
+    }
+  }
+
+  const playerMs = Date.now() - playerStarted;
+  const doneParts = [`${playerSucceeded} ingested`];
+  if (playerFailed > 0) doneParts.push(`${playerFailed} failed`);
+  if (playerSkipped > 0) doneParts.push(`${playerSkipped} skipped`);
+  console.log(
+    `Done ${playerName}: ${doneParts.join(", ")} (${(playerMs / 1000).toFixed(1)}s)`,
+  );
+
+  return {
+    player,
+    playerIndex,
+    playerName,
+    playerSucceeded,
+    playerFailed,
+    playerSkipped,
+    createdPlayers,
+    reusedPlayers,
+    results,
+    shouldCheckpoint:
+      options.scrapeMode === "backfill" &&
+      !options.dryRun &&
+      toIngest.length > 0 &&
+      playerFailed === 0,
+    elapsedMs: playerMs,
+  };
+}
+
 export async function runScrape(
   config: AppConfig,
   options: ScrapeOptions,
 ): Promise<{ results: ScrapeResultItem[]; summary: ScrapeSummary }> {
-  const requestDelayMs = options.requestDelayMs ?? config.requestDelayMs;
+  const isBackfill = options.scrapeMode === "backfill";
+  const playerConcurrency =
+    options.playerConcurrency ?? (isBackfill ? 8 : 1);
   const seasonConcurrency =
-    options.seasonConcurrency ?? (options.scrapeMode === "backfill" ? 4 : 1);
+    options.seasonConcurrency ?? (isBackfill ? 8 : 1);
   const ingestConcurrency =
-    options.ingestConcurrency ?? (options.scrapeMode === "backfill" ? 3 : 1);
+    options.ingestConcurrency ?? (isBackfill ? 4 : 1);
 
-  const bdl = new BalldontlieClient(config.balldontlieApiKey);
+  const rateLimiter = new RateLimiter(config.balldontlieRequestsPerMinute);
+  const bdl = new BalldontlieClient(config.balldontlieApiKey, rateLimiter);
   const ingest = new IngestClient(config.hoopCentralApiUrl, config.ingestApiKey);
 
   console.log(`Job: ${modeLabel(options)}`);
   console.log(`Target season through: ${options.seasonLabel}`);
   console.log(
-    `Concurrency: ${seasonConcurrency} season fetches, ${ingestConcurrency} ingests`,
+    `Concurrency: ${playerConcurrency} players, ${seasonConcurrency} season fetches/player, ${ingestConcurrency} ingests/player`,
   );
+  console.log(`balldontlie rate limit: ${config.balldontlieRequestsPerMinute} req/min`);
   console.log("");
 
   if (!options.dryRun) {
@@ -97,6 +238,7 @@ export async function runScrape(
     searchNames: options.searchNames,
     allPlayers: options.allPlayers,
     limit: options.limit,
+    refreshPlayerCache: options.fresh === true,
   });
 
   const checkpointPath = options.checkpointPath ?? DEFAULT_BACKFILL_CHECKPOINT;
@@ -124,6 +266,55 @@ export async function runScrape(
   console.log("");
 
   let checkpoint = initialCheckpoint;
+  const checkpointMutex = new AsyncMutex();
+
+  const scrapeOptions: ScrapeOptions = {
+    ...options,
+    seasonConcurrency,
+    ingestConcurrency,
+  };
+
+  const startedAt = Date.now();
+  let completedPlayers = 0;
+
+  const playerResults = await mapWithConcurrency(
+    players,
+    playerConcurrency,
+    async (player, index) => {
+      const result = await processPlayer(
+        player,
+        index,
+        players.length,
+        scrapeOptions,
+        bdl,
+        ingest,
+      );
+
+      if (result.shouldCheckpoint) {
+        await checkpointMutex.run(async () => {
+          checkpoint = ensureCheckpoint(checkpoint, options.bdlSeasonYear);
+          checkpoint = markPlayerComplete(
+            checkpoint,
+            result.player.id,
+            checkpointPath,
+          );
+        });
+      }
+
+      completedPlayers += 1;
+      if (
+        result.playerSucceeded > 0 &&
+        completedPlayers % 25 === 0
+      ) {
+        const elapsed = ((Date.now() - startedAt) / 1000 / 60).toFixed(1);
+        console.log(
+          `[progress] players=${completedPlayers}/${players.length} elapsed=${elapsed}m`,
+        );
+      }
+
+      return result;
+    },
+  );
 
   const results: ScrapeResultItem[] = [];
   let createdPlayers = 0;
@@ -131,119 +322,20 @@ export async function runScrape(
   let ingested = 0;
   let skipped = 0;
   let resultIndex = 0;
-  const startedAt = Date.now();
 
-  for (let p = 0; p < players.length; p += 1) {
-    const player = players[p];
-    const playerName = `${player.first_name} ${player.last_name}`.trim();
-    const seasonYears = seasonsForPlayer(
-      player,
-      options.bdlSeasonYear,
-      options.allSeasons,
-    );
+  for (const pr of playerResults) {
+    skipped += pr.playerSkipped;
+    ingested += pr.playerSucceeded;
+    createdPlayers += pr.createdPlayers;
+    reusedPlayers += pr.reusedPlayers;
 
-    const playerStarted = Date.now();
-    console.log(
-      `Processing player ${p + 1}/${players.length}: ${playerName} (${seasonYears.length} seasons to check)`,
-    );
-
-    const records = await mapWithConcurrency(
-      seasonYears,
-      seasonConcurrency,
-      async (seasonYear) => {
-        try {
-          return await fetchPlayerSeasonRecord(bdl, player, seasonYear);
-        } catch (error) {
-          const label = `${playerName} ${bdlSeasonToLabel(seasonYear)}`;
-          const message = error instanceof Error ? error.message : String(error);
-          console.log(`→ fetch failed ${label}: ${message}`);
-          return null;
-        }
-      },
-    );
-
-    const toIngest: NbaPlayerSeasonRecord[] = [];
-    for (const record of records) {
-      if (record) toIngest.push(record);
-      else skipped += 1;
-    }
-
-    let playerFailed = 0;
-    let playerSucceeded = 0;
-
-    if (toIngest.length > 0) {
-      const ingestResults = await mapWithConcurrency(
-        toIngest,
-        ingestConcurrency,
-        async (record) => {
-          const payload = toIngestPayload(record);
-          const outcome = await ingestPayload(ingest, payload, options.dryRun);
-          return { payload, outcome };
-        },
-      );
-
-      for (const { payload, outcome } of ingestResults) {
-        resultIndex += 1;
-        const label = formatLabel(payload);
-
-        if (outcome.status === "success") {
-          ingested += 1;
-          playerSucceeded += 1;
-          if (outcome.reusedPlayer === false) createdPlayers += 1;
-          else if (outcome.reusedPlayer === true) reusedPlayers += 1;
-
-          results.push({
-            index: resultIndex,
-            total: resultIndex,
-            label,
-            payload,
-            status: "success",
-            playerId: outcome.playerId,
-            reusedPlayer: outcome.reusedPlayer,
-          });
-        } else {
-          playerFailed += 1;
-          console.log(`→ failed ${label}: ${outcome.error}`);
-          results.push({
-            index: resultIndex,
-            total: resultIndex,
-            label,
-            payload,
-            status: "failed",
-            error: outcome.error,
-          });
-        }
-      }
-    }
-
-    const playerMs = Date.now() - playerStarted;
-    const skippedCount = seasonYears.length - toIngest.length;
-    const doneParts = [`${playerSucceeded} ingested`];
-    if (playerFailed > 0) doneParts.push(`${playerFailed} failed`);
-    if (skippedCount > 0) doneParts.push(`${skippedCount} skipped`);
-    console.log(
-      `Done ${playerName}: ${doneParts.join(", ")} (${(playerMs / 1000).toFixed(1)}s)`,
-    );
-
-    if (
-      options.scrapeMode === "backfill" &&
-      !options.dryRun &&
-      toIngest.length > 0 &&
-      playerFailed === 0
-    ) {
-      checkpoint = ensureCheckpoint(checkpoint, options.bdlSeasonYear);
-      checkpoint = markPlayerComplete(checkpoint, player.id, checkpointPath);
-    }
-
-    if (ingested > 0 && ingested % 100 === 0) {
-      const elapsed = ((Date.now() - startedAt) / 1000 / 60).toFixed(1);
-      console.log(
-        `[progress] ingested=${ingested} skipped=${skipped} failed=${results.filter((r) => r.status === "failed").length} elapsed=${elapsed}m`,
-      );
-    }
-
-    if (requestDelayMs > 0) {
-      await sleep(requestDelayMs);
+    for (const item of pr.results) {
+      resultIndex += 1;
+      results.push({
+        ...item,
+        index: resultIndex,
+        total: resultIndex,
+      });
     }
   }
 

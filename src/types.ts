@@ -179,9 +179,11 @@ export interface ScrapeOptions {
   limit?: number;
   dryRun: boolean;
   requestDelayMs?: number;
-  /** Parallel balldontlie season fetches per player (backfill default: 4). */
+  /** Parallel players processed at once (backfill default: 10). */
+  playerConcurrency?: number;
+  /** Parallel balldontlie season fetches per player (backfill default: 12). */
   seasonConcurrency?: number;
-  /** Parallel ingest POSTs (backfill default: 3). */
+  /** Parallel ingest POSTs per player (backfill default: 6). */
   ingestConcurrency?: number;
   /** Resume backfill from checkpoint / log (default true for --backfill). */
   resume?: boolean;

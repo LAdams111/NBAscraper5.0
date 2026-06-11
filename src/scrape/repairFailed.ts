@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { BalldontlieClient } from "../balldontlieClient.js";
+import { RateLimiter } from "../utils/rateLimiter.js";
 import { IngestClient } from "../ingestClient.js";
 import type { AppConfig } from "../config.js";
 import { toIngestPayload } from "../transform.js";
@@ -56,7 +57,8 @@ export async function runRepairFailed(
     };
   }
 
-  const bdl = new BalldontlieClient(config.balldontlieApiKey);
+  const rateLimiter = new RateLimiter(config.balldontlieRequestsPerMinute);
+  const bdl = new BalldontlieClient(config.balldontlieApiKey, rateLimiter);
   const ingest = new IngestClient(config.hoopCentralApiUrl, config.ingestApiKey);
 
   if (!options.dryRun) {
