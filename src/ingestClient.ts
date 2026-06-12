@@ -17,6 +17,73 @@ export class IngestClient {
     private readonly apiKey: string | null,
   ) {}
 
+  async getCompletionStatus(source = "balldontlie"): Promise<{
+    source: string;
+    players: Array<{
+      playerId: number;
+      externalId: string;
+      seasons: Array<{
+        seasonLabel: string;
+        gamesPlayed: number;
+        pointsPerGame: number;
+        reboundsPerGame: number;
+        assistsPerGame: number;
+      }>;
+    }>;
+  }> {
+    const url = `${this.baseUrl}/api/ingest/completion-status?source=${encodeURIComponent(source)}`;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (this.apiKey) {
+      headers["x-ingest-api-key"] = this.apiKey;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url, { headers });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new IngestClientError(`Network error fetching completion status: ${message}`);
+    }
+
+    const text = await response.text();
+    let body: unknown = null;
+    if (text) {
+      try {
+        body = JSON.parse(text) as unknown;
+      } catch {
+        throw new IngestClientError(
+          `Invalid JSON from Hoop Central (${response.status})`,
+          response.status,
+          text,
+        );
+      }
+    }
+
+    if (!response.ok) {
+      const detail = formatIngestError(body, text, response.statusText);
+      throw new IngestClientError(
+        `Completion status failed (${response.status}): ${detail}`,
+        response.status,
+        body,
+      );
+    }
+
+    return body as {
+      source: string;
+      players: Array<{
+        playerId: number;
+        externalId: string;
+        seasons: Array<{
+          seasonLabel: string;
+          gamesPlayed: number;
+          pointsPerGame: number;
+          reboundsPerGame: number;
+          assistsPerGame: number;
+        }>;
+      }>;
+    };
+  }
+
   async healthCheck(): Promise<{ ok: boolean; status: number }> {
     const url = `${this.baseUrl}/api/health`;
     let response: Response;

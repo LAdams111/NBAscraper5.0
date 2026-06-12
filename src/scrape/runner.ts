@@ -19,9 +19,11 @@ import {
   DEFAULT_BACKFILL_LOG,
   ensureCheckpoint,
   markPlayerComplete,
+  markPlayersComplete,
   resolveBackfillPlayers,
   type BackfillCheckpoint,
 } from "./checkpoint.js";
+import { filterPlayersByWebsiteCompletion } from "./completionCheck.js";
 import {
   collectTargetPlayers,
   fetchPlayerSeasonRecord,
@@ -256,16 +258,53 @@ export async function runScrape(
         })
       : { pending: allPlayers, skipped: 0, checkpoint: null as BackfillCheckpoint | null };
 
+  let playersToProcess = players;
+  let checkpoint = initialCheckpoint;
+  let websiteVerified = 0;
+
+  if (
+    options.scrapeMode === "backfill" &&
+    !options.dryRun &&
+    !options.fresh &&
+    options.skipWebsiteVerify !== false &&
+    players.length > 0
+  ) {
+    const { complete, stillPending } = await filterPlayersByWebsiteCompletion(
+      players,
+      {
+        ingest,
+        bdl,
+        bdlSeasonYear: options.bdlSeasonYear,
+      },
+    );
+
+    if (complete.length > 0) {
+      checkpoint = ensureCheckpoint(checkpoint, options.bdlSeasonYear);
+      checkpoint = markPlayersComplete(
+        checkpoint,
+        complete.map((p) => p.id),
+        checkpointPath,
+      );
+      websiteVerified = complete.length;
+    }
+
+    playersToProcess = stillPending;
+  }
+
   console.log(`Loaded ${allPlayers.length} player(s) total`);
   if (resumedSkipped > 0) {
     console.log(
-      `Resuming backfill: skipping ${resumedSkipped} already-completed player(s)`,
+      `Resuming backfill: skipping ${resumedSkipped} already-completed player(s) from checkpoint`,
     );
   }
-  console.log(`Processing ${players.length} player(s)`);
+  if (websiteVerified > 0) {
+    console.log(
+      `Website verification: marked ${websiteVerified} additional player(s) complete`,
+    );
+  }
+  console.log(`Processing ${playersToProcess.length} player(s)`);
   console.log("");
 
-  let checkpoint = initialCheckpoint;
   const checkpointMutex = new AsyncMutex();
 
   const scrapeOptions: ScrapeOptions = {
@@ -278,13 +317,13 @@ export async function runScrape(
   let completedPlayers = 0;
 
   const playerResults = await mapWithConcurrency(
-    players,
+    playersToProcess,
     playerConcurrency,
     async (player, index) => {
       const result = await processPlayer(
         player,
         index,
-        players.length,
+        playersToProcess.length,
         scrapeOptions,
         bdl,
         ingest,
@@ -308,7 +347,7 @@ export async function runScrape(
       ) {
         const elapsed = ((Date.now() - startedAt) / 1000 / 60).toFixed(1);
         console.log(
-          `[progress] players=${completedPlayers}/${players.length} elapsed=${elapsed}m`,
+          `[progress] players=${completedPlayers}/${playersToProcess.length} elapsed=${elapsed}m`,
         );
       }
 

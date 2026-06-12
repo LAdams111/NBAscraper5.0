@@ -41,6 +41,7 @@ Other options:
   --season-concurrency <n>  Parallel season fetches per player (backfill: 8)
   --ingest-concurrency <n>  Parallel ingests per player (backfill: 4)
   --fresh                Ignore checkpoint and reprocess all players
+  --skip-website-verify  Do not skip players already complete on Hoop Central
   --repair-failed        Re-ingest season rows that failed in scrape-backfill.log
 
 Resume:
@@ -77,6 +78,7 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
   let showHelp = false;
   let fresh = false;
   let repairFailed = false;
+  let skipWebsiteVerify = false;
   let playerConcurrency: number | undefined;
   let seasonConcurrency: number | undefined;
   let ingestConcurrency: number | undefined;
@@ -154,6 +156,9 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
         break;
       case "--repair-failed":
         repairFailed = true;
+        break;
+      case "--skip-website-verify":
+        skipWebsiteVerify = true;
         break;
       case "--player-concurrency": {
         const value = argv[++i];
@@ -244,6 +249,7 @@ function parseArgs(argv: string[]): ScrapeOptions & { health: boolean; showHelp:
     resume: backfill ? true : undefined,
     fresh: fresh || undefined,
     repairFailed: repairFailed || undefined,
+    skipWebsiteVerify: skipWebsiteVerify || undefined,
     health,
     showHelp,
   };

@@ -191,6 +191,8 @@ export interface ScrapeOptions {
   fresh?: boolean;
   /** Re-ingest season rows that failed during a prior backfill run. */
   repairFailed?: boolean;
+  /** Skip players already complete on Hoop Central (default true for backfill). */
+  skipWebsiteVerify?: boolean;
   checkpointPath?: string;
   logPath?: string;
 }

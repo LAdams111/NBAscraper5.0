@@ -90,10 +90,6 @@ export function bootstrapCheckpointFromLog(
   const names = parseCompletedNamesFromLog(logContent);
   if (names.size === 0) return null;
 
-  for (const failedName of parseFailedNamesFromLog(logContent)) {
-    names.delete(failedName);
-  }
-
   const completedPlayerIds: number[] = [];
   for (const player of players) {
     if (names.has(playerDisplayName(player))) {
@@ -149,26 +145,6 @@ export function resolveBackfillPlayers(
     return { pending: players, skipped: 0, checkpoint: null };
   }
 
-  if (existsSync(options.logPath)) {
-    const failedNames = parseFailedNamesFromLog(readFileSync(options.logPath, "utf8"));
-    if (failedNames.size > 0) {
-      const failedIds = new Set(
-        players
-          .filter((p) => failedNames.has(playerDisplayName(p)))
-          .map((p) => p.id),
-      );
-      if (failedIds.size > 0) {
-        checkpoint = {
-          ...checkpoint,
-          completedPlayerIds: checkpoint.completedPlayerIds.filter(
-            (id) => !failedIds.has(id),
-          ),
-        };
-        saveCheckpoint(options.checkpointPath, checkpoint);
-      }
-    }
-  }
-
   const completed = new Set(checkpoint.completedPlayerIds);
   const pending = players.filter((p) => !completed.has(p.id));
 
@@ -200,6 +176,21 @@ export function markPlayerComplete(
   if (!checkpoint.completedPlayerIds.includes(playerId)) {
     checkpoint.completedPlayerIds.push(playerId);
   }
+  checkpoint.updatedAt = new Date().toISOString();
+  saveCheckpoint(checkpointPath, checkpoint);
+  return checkpoint;
+}
+
+export function markPlayersComplete(
+  checkpoint: BackfillCheckpoint,
+  playerIds: number[],
+  checkpointPath: string,
+): BackfillCheckpoint {
+  const existing = new Set(checkpoint.completedPlayerIds);
+  for (const playerId of playerIds) {
+    existing.add(playerId);
+  }
+  checkpoint.completedPlayerIds = [...existing];
   checkpoint.updatedAt = new Date().toISOString();
   saveCheckpoint(checkpointPath, checkpoint);
   return checkpoint;
