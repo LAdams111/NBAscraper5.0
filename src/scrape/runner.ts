@@ -206,11 +206,11 @@ export async function runScrape(
 ): Promise<{ results: ScrapeResultItem[]; summary: ScrapeSummary }> {
   const isBackfill = options.scrapeMode === "backfill";
   const playerConcurrency =
-    options.playerConcurrency ?? (isBackfill ? 8 : 1);
+    options.playerConcurrency ?? (isBackfill ? 6 : 1);
   const seasonConcurrency =
     options.seasonConcurrency ?? (isBackfill ? 8 : 1);
   const ingestConcurrency =
-    options.ingestConcurrency ?? (isBackfill ? 4 : 1);
+    options.ingestConcurrency ?? (isBackfill ? 2 : 1);
 
   const rateLimiter = new RateLimiter(config.balldontlieRequestsPerMinute);
   const bdl = new BalldontlieClient(config.balldontlieApiKey, rateLimiter);

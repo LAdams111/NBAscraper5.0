@@ -29,6 +29,12 @@ export class IngestClient {
     return { ok: response.ok, status: response.status };
   }
 
+  private static readonly RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   async sendPlayerSeason(
     payload: HoopCentralIngestPayload,
   ): Promise<HoopCentralIngestResponse> {
@@ -41,42 +47,70 @@ export class IngestClient {
       headers["x-ingest-api-key"] = this.apiKey;
     }
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new IngestClientError(`Network error posting ingest payload: ${message}`);
-    }
-
-    const text = await response.text();
-    let body: unknown = null;
-    if (text) {
+    const maxAttempts = 5;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let response: Response;
       try {
-        body = JSON.parse(text) as unknown;
-      } catch {
+        response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        if (attempt < maxAttempts) {
+          await this.sleep(500 * attempt);
+          continue;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw new IngestClientError(`Network error posting ingest payload: ${message}`);
+      }
+
+      const retryAfterHeader = response.headers.get("Retry-After");
+      const retryAfterMs = retryAfterHeader
+        ? Math.max(1000, Number.parseInt(retryAfterHeader, 10) * 1000 || 2000)
+        : 500 * attempt;
+
+      const text = await response.text();
+      let body: unknown = null;
+      if (text) {
+        try {
+          body = JSON.parse(text) as unknown;
+        } catch {
+          if (
+            IngestClient.RETRYABLE_STATUSES.has(response.status) &&
+            attempt < maxAttempts
+          ) {
+            await this.sleep(retryAfterMs);
+            continue;
+          }
+          throw new IngestClientError(
+            `Invalid JSON from Hoop Central (${response.status})`,
+            response.status,
+            text,
+          );
+        }
+      }
+
+      if (!response.ok) {
+        if (
+          IngestClient.RETRYABLE_STATUSES.has(response.status) &&
+          attempt < maxAttempts
+        ) {
+          await this.sleep(retryAfterMs);
+          continue;
+        }
+        const detail = formatIngestError(body, text, response.statusText);
         throw new IngestClientError(
-          `Invalid JSON from Hoop Central (${response.status})`,
+          `Ingest failed (${response.status}): ${detail}`,
           response.status,
-          text,
+          body,
         );
       }
+
+      return body as HoopCentralIngestResponse;
     }
 
-    if (!response.ok) {
-      const detail = formatIngestError(body, text, response.statusText);
-      throw new IngestClientError(
-        `Ingest failed (${response.status}): ${detail}`,
-        response.status,
-        body,
-      );
-    }
-
-    return body as HoopCentralIngestResponse;
+    throw new IngestClientError("Ingest failed after retries");
   }
 }
 
