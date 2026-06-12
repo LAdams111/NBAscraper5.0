@@ -84,10 +84,17 @@ async function isPlayerCompleteOnWebsite(
   }
 
   const seasonYears = seasonsForPlayer(player, bdlSeasonYear, true);
+  const averagesList = await mapWithConcurrency(
+    seasonYears,
+    8,
+    async (seasonYear) => ({
+      seasonYear,
+      label: bdlSeasonToLabel(seasonYear),
+      averages: await bdl.getSeasonAverages(player.id, seasonYear),
+    }),
+  );
 
-  for (const seasonYear of seasonYears) {
-    const label = bdlSeasonToLabel(seasonYear);
-    const averages = await bdl.getSeasonAverages(player.id, seasonYear);
+  for (const { label, averages } of averagesList) {
     if (!averages || averages.games_played <= 0) continue;
 
     const hcRows = hcBySeason.get(label);
@@ -124,15 +131,27 @@ export async function filterPlayersByWebsiteCompletion(
   console.log(
     `Loaded ${statusByExternalId.size} ingested player(s) from Hoop Central (${source}).`,
   );
-  console.log(`Verifying ${pending.length} pending player(s) against balldontlie...`);
+  const toVerify: BdlPlayer[] = [];
+  const stillPending: BdlPlayer[] = [];
+
+  for (const player of pending) {
+    if (statusByExternalId.has(String(player.id))) {
+      toVerify.push(player);
+    } else {
+      stillPending.push(player);
+    }
+  }
+
+  console.log(
+    `Verifying ${toVerify.length} on-site player(s) against balldontlie (${stillPending.length} not on site yet)...`,
+  );
   console.log("");
 
   const complete: BdlPlayer[] = [];
-  const stillPending: BdlPlayer[] = [];
-
   let checked = 0;
+
   const results = await mapWithConcurrency(
-    pending,
+    toVerify,
     verifyConcurrency,
     async (player) => {
       const hcStatus = statusByExternalId.get(String(player.id));
@@ -143,8 +162,8 @@ export async function filterPlayersByWebsiteCompletion(
         options.bdlSeasonYear,
       );
       checked += 1;
-      if (checked % 100 === 0) {
-        console.log(`[verify] checked ${checked}/${pending.length} pending players...`);
+      if (checked % 50 === 0) {
+        console.log(`[verify] checked ${checked}/${toVerify.length} on-site players...`);
       }
       return { player, done };
     },
